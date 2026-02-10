@@ -24,6 +24,7 @@ print("Method: Computing TDA based on Correlation Distance (Ultrametric)...")
 #  D = sqrt(2(1-C))
 results_corr = engine.compute_correlation_tda(returns)
 
+engine.plot_market_topology(returns, '2021-05-18', epsilon=0.85)
 # =============================================================================
 # 4. Visualization (Replicating Paper Figure 3 Logic)
 # =============================================================================
@@ -61,6 +62,7 @@ plt.tight_layout()
 plt.show()
 
 print("Replication analysis complete. Single graph generated.")
+
 
 table_5_replica = engine.calculate_summary_statistics(results_corr)
 print("\n--- Table 5 Replication: Summary Statistics ---")

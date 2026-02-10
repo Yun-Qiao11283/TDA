@@ -5,6 +5,9 @@ from gtda.time_series import SlidingWindow
 from gtda.homology import VietorisRipsPersistence
 from gtda.diagrams import Amplitude
 import scipy.stats as stats
+import seaborn as sns
+import networkx as nx
+import matplotlib.pyplot as plt
 
 
 class TDAFinancialEngine:
@@ -92,4 +95,56 @@ class TDAFinancialEngine:
             stats_list.append(res)
 
         return pd.DataFrame(stats_list)
+
+
+    def plot_market_topology(self, returns_df, target_date, epsilon=0.8):
+        """
+        Visualizes the step-by-step transformation for a specific date.
+        """
+        # 1. Data
+        target_idx = returns_df.index.get_loc(pd.to_datetime(target_date))
+        window_data = returns_df.iloc[target_idx - self.window_size + 1: target_idx + 1]
+
+        # 2. Calculate correlation matrix and distance matrix
+        corr_matrix = window_data.corr()
+        dist_matrix = np.sqrt(2 * (1 - corr_matrix.fillna(0)))
+
+        # --- Set figure ---
+        fig = plt.figure(figsize=(20, 6))
+
+        # Figure A: Correlation and Its Implications for Risk
+        ax1 = fig.add_subplot(131)
+        sns.heatmap(corr_matrix, annot=False, cmap='RdBu_r', center=0, ax=ax1,
+                    cbar_kws={'label': 'Correlation Strength\n(Red=High Risk/Convergence)'})
+        ax1.set_title(r"A. Correlation Matrix $C_{ij}^\tau(t)$" + f"\nDate: {target_date}")
+
+        # Figure B: Distance and Its Topological Meaning
+        ax2 = fig.add_subplot(132)
+        sns.heatmap(dist_matrix, annot=False, cmap='viridis_r', ax=ax2,
+                    cbar_kws={'label': 'Metric Distance $D_{ij}$\n(Yellow=Close/Simplex Connects)'})
+        ax2.set_title(r"B. Ultrametric Distance $D = \sqrt{2(1-C)}$")
+
+        # Figure C: Geometric Connection of Simple Complexes
+        ax3 = fig.add_subplot(133)
+        G = nx.from_pandas_adjacency((dist_matrix < epsilon).astype(int))
+        G.remove_edges_from(nx.selfloop_edges(G))
+
+        pos = nx.spring_layout(G, seed=42)
+        nx.draw(G, pos, with_labels=True, node_color='lightcoral',
+                node_size=600, font_size=9, ax=ax3, edge_color='gray', alpha=0.5)
+
+        # Add text explanation
+        explanation = (
+            f"Topological Meaning:\n"
+            f"1. Edges exist if $D_{{ij}} < {epsilon}$\n"
+            f"2. Complex density relates to $L_1$ Norm\n"
+            f"3. High cluster density = Market Instability"
+        )
+        ax3.text(1.05, 0.1, explanation, transform=ax3.transAxes,
+                 bbox=dict(facecolor='white', alpha=0.8, boxstyle='round,pad=0.5'),
+                 fontsize=10, verticalalignment='bottom')
+        ax3.set_title(f"C. Simplicial Complex ($\epsilon$ = {epsilon})")
+
+        plt.tight_layout()
+        plt.show()
 
