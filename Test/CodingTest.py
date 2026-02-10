@@ -23,7 +23,7 @@ returns = engine.prepare_returns(COINS, START_DATE, END_DATE)
 print("Method: Computing TDA based on Correlation Distance (Ultrametric)...")
 #  D = sqrt(2(1-C))
 results_corr = engine.compute_correlation_tda(returns)
-
+engine.plot_asset_cloud_3D(returns, '2021-05-18')
 engine.plot_market_topology(returns, '2021-05-18', epsilon=0.85)
 # =============================================================================
 # 4. Visualization (Replicating Paper Figure 3 Logic)

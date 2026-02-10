@@ -8,6 +8,7 @@ import scipy.stats as stats
 import seaborn as sns
 import networkx as nx
 import matplotlib.pyplot as plt
+from sklearn.decomposition import PCA
 
 
 class TDAFinancialEngine:
@@ -144,6 +145,81 @@ class TDAFinancialEngine:
                  bbox=dict(facecolor='white', alpha=0.8, boxstyle='round,pad=0.5'),
                  fontsize=10, verticalalignment='bottom')
         ax3.set_title(f"C. Simplicial Complex ($\epsilon$ = {epsilon})")
+
+        plt.tight_layout()
+        plt.show()
+
+    def plot_asset_cloud_2D(self, returns_df, target_date):
+        """
+        Visualizes the 10 assets as points in 60-dimensional space via PCA.
+        This illustrates the 'Asset as a Point' duality.
+        """
+        try:
+            target_idx = returns_df.index.get_loc(pd.to_datetime(target_date))
+            # Transpose to get (Assets, Time) -> (10, 60)
+            window_data = returns_df.iloc[target_idx - self.window_size + 1: target_idx + 1].T
+        except KeyError:
+            print(f"Error: Date {target_date} not found.")
+            return
+
+        # Project 60D assets to 2D for visualization
+        pca = PCA(n_components=2)
+        assets_2d = pca.fit_transform(window_data.values)
+
+        plt.figure(figsize=(10, 8))
+        plt.scatter(assets_2d[:, 0], assets_2d[:, 1], s=100, color='coral', edgecolors='black')
+
+        # Add labels for each asset
+        for i, asset in enumerate(window_data.index):
+            plt.annotate(asset, (assets_2d[i, 0], assets_2d[i, 1]), xytext=(5, 5), textcoords='offset points')
+
+        plt.title(f"10 Assets in 60D Feature Space (PCA)\nTarget Date: {target_date}")
+        plt.xlabel("Principal Component 1")
+        plt.ylabel("Principal Component 2")
+        plt.grid(True, linestyle='--', alpha=0.6)
+        plt.show()
+
+    def plot_asset_cloud_3D(self, returns_df, target_date):
+        """
+        Visualizes the 10 assets as points in 60-dimensional space via 3D PCA.
+        Consistent with the '10 points in R^60' duality.
+        """
+        try:
+            target_idx = returns_df.index.get_loc(pd.to_datetime(target_date))
+            # Transpose: (Time, Assets) -> (Assets, Time) to treat assets as 60D points
+            window_data = returns_df.iloc[target_idx - self.window_size + 1: target_idx + 1].T
+        except KeyError:
+            print(f"Error: Date {target_date} not found.")
+            return
+
+        # 1. Project 60D assets to 3D space
+        pca = PCA(n_components=3)
+        assets_3d = pca.fit_transform(window_data.values)
+        explained_var = np.sum(pca.explained_variance_ratio_) * 100
+
+        # 2. Setup 3D Plot
+        fig = plt.figure(figsize=(12, 9))
+        ax = fig.add_subplot(111, projection='3d')
+
+        # 3. Scatter Plot
+        # Using 'coral' for nodes as per your previous preference
+        scatter = ax.scatter(assets_3d[:, 0], assets_3d[:, 1], assets_3d[:, 2],
+                             s=150, color='coral', edgecolors='black', alpha=0.8)
+
+        # 4. Label each asset point (the '10 names')
+        for i, asset in enumerate(window_data.index):
+            ax.text(assets_3d[i, 0], assets_3d[i, 1], assets_3d[i, 2], asset,
+                    fontsize=10, fontweight='bold')
+
+        # 5. Formatting with Mathematical Context
+        ax.set_title(
+            f"3D Asset Cloud in Feature Space (PCA)\nTarget Date: {target_date}\nTotal Variance Explained: {explained_var:.2f}%")
+        ax.set_xlabel("PC 1")
+        ax.set_ylabel("PC 2")
+        ax.set_zlabel("PC 3")
+
+        # Use standard white grid for clarity
+        ax.grid(True, linestyle='--', alpha=0.3)
 
         plt.tight_layout()
         plt.show()
