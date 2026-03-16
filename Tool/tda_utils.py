@@ -159,3 +159,43 @@ class TDAFinancialEngine:
 
         ax1.grid(True, alpha=0.3)
         plt.show()
+
+    def plot_empirical_distribution(self, returns_df, asset_name=None):
+        """
+        Draw the empirical distribution histogram and Q-Q plot of the specified asset.
+        """
+        import scipy.stats as stats
+        import matplotlib.gridspec as gridspec
+
+        # If no asset is specified, the first asset will be drawn by default
+        if asset_name is None:
+            asset_name = returns_df.columns[0]
+
+        if asset_name not in returns_df.columns:
+            print(f"⚠️ 找不到资产 {asset_name}")
+            return
+
+        data_1d = returns_df[asset_name].dropna()
+
+        fig = plt.figure(figsize=(12, 5))
+        gs = gridspec.GridSpec(1, 2, width_ratios=[1, 1])
+
+        # --- Left figure: Histogram and fitted normal curve---
+        ax0 = plt.subplot(gs[0])
+        sns.histplot(data_1d, bins=50, kde=True, stat='density', ax=ax0, color='teal', alpha=0.6)
+        xmin, xmax = ax0.get_xlim()
+        x_pdf = np.linspace(xmin, xmax, 100)
+        y_pdf = stats.norm.pdf(x_pdf, np.mean(data_1d), np.std(data_1d))
+        ax0.plot(x_pdf, y_pdf, 'r--', lw=2, label='Normal Dist Fit')
+        ax0.set_title(f"Empirical Distribution of {asset_name}")
+        ax0.legend()
+
+        # --- Right picture: Q-Q chart ---
+        ax1 = plt.subplot(gs[1])
+        stats.probplot(data_1d, dist="norm", plot=ax1)
+        ax1.get_lines()[0].set_markerfacecolor('teal')
+        ax1.get_lines()[0].set_markeredgecolor('teal')
+        ax1.get_lines()[1].set_color('red')
+        ax1.set_title("Q-Q Plot (Fat Tails Observation)")
+
+        plt.show()

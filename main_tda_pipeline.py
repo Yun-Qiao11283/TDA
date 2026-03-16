@@ -28,6 +28,7 @@ if __name__ == "__main__":
     print("\nStep 3: Executing Normality Tests on selected Anchors...")
     normality_table = batch_normality_test(returns)
     print(normality_table)
+    engine.plot_empirical_distribution(returns, asset_name=None)
 
     # --- Step 4: Topological Data Analysis Visualization ---
     print("\nStep 4: Executing TDA Visualizations for crash date...")
