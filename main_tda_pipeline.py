@@ -1,5 +1,7 @@
 from Tool.helper import select_topological_anchors, get_sp500_symbols, batch_normality_test
 from Tool.tda_utils import TDAFinancialEngine
+import pandas as pd
+import numpy as np
 
 if __name__ == "__main__":
     # --- Step 1: Define an expansive pool with exogenous assets ---

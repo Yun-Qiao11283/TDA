@@ -5,16 +5,24 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import networkx as nx
 from sklearn.decomposition import PCA
-
+from ripser import ripser
+import persim
+import os
 # Giotto-TDA import
 from gtda.homology import VietorisRipsPersistence
 from gtda.diagrams import Amplitude
 from gtda.time_series import SlidingWindow
 
 class TDAFinancialEngine:
-    def __init__(self, window_size=60):
+    def __init__(self, window_size=60, max_homology_dim=1, output_dir='./tda_outputs'):
         self.window_size = window_size
         self.sw = SlidingWindow(size=self.window_size, stride=1)
+
+        self.maxdim = max_homology_dim
+        self.output_dir = output_dir
+
+        if not os.path.exists(self.output_dir):
+            os.makedirs(self.output_dir)
 
     def prepare_returns(self, symbols, start_date, end_date):
         # Download data
@@ -199,3 +207,24 @@ class TDAFinancialEngine:
         ax1.set_title("Q-Q Plot (Fat Tails Observation)")
 
         plt.show()
+
+    def generate_persistence_barcode(self, dist_matrix, date_str):
+        dist_array = np.array(dist_matrix)
+
+        result = ripser(dist_array, distance_matrix=True, maxdim=self.maxdim)
+        diagrams = result['dgms']
+
+        plt.figure(figsize=(6, 6))
+        title = f"Persistence Diagram - {date_str}"
+        persim.plot_diagrams(diagrams, title=title)
+        plt.tight_layout()
+
+        safe_date = date_str.replace('-', '')
+        filename = f'barcode_{safe_date}.pdf'
+        save_path = os.path.join(self.output_dir, filename)
+
+        # plt.savefig(save_path, format='pdf', bbox_inches='tight')
+        plt.close()
+
+        print(f"[{date_str}] Barcode saved to: {save_path}")
+        return diagrams
