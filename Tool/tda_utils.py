@@ -180,7 +180,7 @@ class TDAFinancialEngine:
             asset_name = returns_df.columns[0]
 
         if asset_name not in returns_df.columns:
-            print(f"⚠️ 找不到资产 {asset_name}")
+            print(f"⚠️ Cannot find {asset_name}")
             return
 
         data_1d = returns_df[asset_name].dropna()
