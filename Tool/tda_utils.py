@@ -14,7 +14,10 @@ from gtda.diagrams import Amplitude
 from gtda.time_series import SlidingWindow
 
 class TDAFinancialEngine:
-    def __init__(self, window_size=60, max_homology_dim=1, output_dir='./tda_outputs'):
+    def __init__(self, window_size=60, max_homology_dim=1, output_dir='./tda_outputs', show=True):
+        if window_size < 3:
+            raise ValueError('window_size must be at least 3')
+        self.show = show
         self.window_size = window_size
         self.sw = SlidingWindow(size=self.window_size, stride=1)
 
@@ -24,9 +27,40 @@ class TDAFinancialEngine:
         if not os.path.exists(self.output_dir):
             os.makedirs(self.output_dir)
 
+    def _finish_plot(self, filename):
+        plt.savefig(os.path.join(self.output_dir, filename), bbox_inches='tight', dpi=160)
+        if self.show:
+            plt.show()
+        plt.close()
+
+    def get_window(self, returns_df, target_date):
+        """Use the last available observation on or before the requested date."""
+        if returns_df.empty or not returns_df.index.is_monotonic_increasing:
+            raise ValueError('Returns must be nonempty and sorted by date')
+        target_idx = returns_df.index.get_indexer([pd.Timestamp(target_date)], method='pad')[0]
+        if target_idx < self.window_size - 1:
+            raise ValueError('Target date has insufficient preceding observations')
+        actual_date = returns_df.index[target_idx].strftime('%Y-%m-%d')
+        return returns_df.iloc[target_idx - self.window_size + 1:target_idx + 1], actual_date
+
+    @staticmethod
+    def correlation_distance(window):
+        corr = window.corr()
+        if not np.isfinite(corr.values).all():
+            raise ValueError('Window contains missing or constant asset returns')
+        distance = np.sqrt(2 * (1 - corr.clip(-1, 1)))
+        np.fill_diagonal(distance.values, 0)
+        return distance
+
     def prepare_returns(self, symbols, start_date, end_date):
         # Download data
-        data = yf.download(symbols, start=start_date, end=end_date, progress=False)['Close']
+        data = yf.download(symbols, start=start_date, end=end_date, progress=False, auto_adjust=True)['Close']
+        if isinstance(data, pd.Series):
+            data = data.to_frame(name=symbols[0])
+        if data.empty:
+            raise ValueError('No price data were downloaded')
+        # Align mixed asset calendars to weekdays before forward filling.
+        data = data.loc[data.index.dayofweek < 5]
 
         # The yield rate calculated on Monday is based on Monday's price - Friday's price
         # From the close of trading on Friday to the close of trading on Monday, over these three full days, your paper profit or loss is a whole
@@ -38,8 +72,7 @@ class TDAFinancialEngine:
 
     def plot_asset_cloud_3D(self, returns_df, target_date):
         try:
-            target_idx = returns_df.index.get_loc(pd.to_datetime(target_date))
-            window_data = returns_df.iloc[target_idx - self.window_size + 1: target_idx + 1]
+            window_data, target_date = self.get_window(returns_df, target_date)
             valid_window = window_data.dropna(axis=1, how='any')
             X = valid_window.T.values
 
@@ -60,28 +93,14 @@ class TDAFinancialEngine:
 
             ax.set_title(f"3D Market Manifold (PCA) - {target_date}")
 
-            plt.show()
+            self._finish_plot('asset_cloud.png')
         except KeyError:
             print(f"Date {target_date} not found.")
 
     def plot_market_topology_separated(self, returns_df, target_date, epsilon=0.85):
-        target_dt = pd.to_datetime(target_date)
-
-        # Fault-tolerance mechanism: Search for the most recent trading day
-        if target_dt not in returns_df.index:
-            closest_idx = returns_df.index.get_indexer([target_dt], method='nearest')[0]
-            actual_date = returns_df.index[closest_idx]
-            print(f"⚠️ Warning: Not found {target_date}，automatically align to the most recent trading day: {actual_date.strftime('%Y-%m-%d')}")
-            target_idx = closest_idx
-            target_date = actual_date.strftime('%Y-%m-%d')
-        else:
-            target_idx = returns_df.index.get_loc(target_dt)
-
-        window_data = returns_df.iloc[target_idx - self.window_size + 1: target_idx + 1]
-
-        # Calculate the correlation matrix and distance matrix
+        window_data, target_date = self.get_window(returns_df, target_date)
         corr_matrix = window_data.corr()
-        dist_matrix = np.sqrt(2 * (1 - corr_matrix.fillna(0)))
+        dist_matrix = self.correlation_distance(window_data)
 
         # --- Figure 1：Correlation Matrix ---
         plt.figure(figsize=(8, 8))
@@ -89,15 +108,15 @@ class TDAFinancialEngine:
         sns.heatmap(corr_matrix, annot=False, cmap='RdBu_r', center=0, vmin=-1, vmax=1, square=True,
                     cbar_kws={'label': 'Pearson Correlation $C_{ij}$', 'shrink': 0.8})
         plt.title(f"Correlation Matrix (Statistical Space) - {target_date}")
-        plt.show()
+        self._finish_plot('correlation_matrix.png')
 
         # --- Figure 2：Distance Matrix ---
         plt.figure(figsize=(8, 8))
         # Using the viridis_r color system: deep purple for close distances (strong correlation) and light yellow for far distances
         sns.heatmap(dist_matrix, annot=False, cmap='viridis_r', square=True,
-                    cbar_kws={'label': 'Ultrametric Distance $D_{ij}$', 'shrink': 0.8})
-        plt.title(f"Ultrametric Distance Matrix (Topological Space) - {target_date}")
-        plt.show()
+                    cbar_kws={'label': 'Correlation Distance $D_{ij}$', 'shrink': 0.8})
+        plt.title(f"Correlation Distance Matrix (Topological Space) - {target_date}")
+        self._finish_plot('distance_matrix.png')
 
         # --- Figure 3：Simplicial Complex ---
         plt.figure(figsize=(8, 8))
@@ -105,22 +124,23 @@ class TDAFinancialEngine:
         G.remove_edges_from(nx.selfloop_edges(G))
         pos = nx.spring_layout(G, seed=42)
         nx.draw(G, pos, with_labels=True, node_color='lightcoral', node_size=500, font_size=8, alpha=0.8)
-        plt.title(f"Simplicial Complex ($\epsilon$ = {epsilon}) - {target_date}")
-        plt.show()
+        plt.title(f"Vietoris-Rips Graph ($\epsilon$ = {epsilon}) - {target_date}")
+        self._finish_plot('market_graph.png')
 
     def compute_topology_timeseries(self, returns_df):
         print("Computing Persistent Homology over sliding windows (This may take a moment)...")
         # Ensure no NaN columns disrupt the sliding window
         clean_returns = returns_df.dropna(axis=1, how='any')
+        if len(clean_returns) < self.window_size or clean_returns.shape[1] < 2:
+            raise ValueError('Insufficient complete data for topology')
         X_windows = self.sw.fit_transform(clean_returns.values)
 
         l1_h0, l1_h1 = [], []
         VR = VietorisRipsPersistence(metric='precomputed', homology_dimensions=[0, 1])
-        l1_amp = Amplitude(metric='landscape', metric_params={'p': 1}, order=1.0)
+        l1_amp = Amplitude(metric='landscape', metric_params={'p': 1}, order=None)
 
         for win in X_windows:
-            corr = pd.DataFrame(win).corr().fillna(0).values
-            dist = np.sqrt(2 * (1 - np.clip(corr, -1, 1)))
+            dist = self.correlation_distance(pd.DataFrame(win)).values
             diagrams = VR.fit_transform([dist])
             scores = l1_amp.fit_transform(diagrams)[0]
             l1_h0.append(scores[0])
@@ -166,7 +186,7 @@ class TDAFinancialEngine:
         ax1.legend(lines_1 + lines_2, labels_1 + labels_2, loc='upper left')
 
         ax1.grid(True, alpha=0.3)
-        plt.show()
+        self._finish_plot('homology_timeseries.png')
 
     def plot_empirical_distribution(self, returns_df, asset_name=None):
         """
@@ -206,7 +226,7 @@ class TDAFinancialEngine:
         ax1.get_lines()[1].set_color('red')
         ax1.set_title("Q-Q Plot (Fat Tails Observation)")
 
-        plt.show()
+        self._finish_plot('empirical_distribution.png')
 
     def generate_persistence_barcode(self, dist_matrix, date_str):
         dist_array = np.array(dist_matrix)
@@ -220,11 +240,11 @@ class TDAFinancialEngine:
         plt.tight_layout()
 
         safe_date = date_str.replace('-', '')
-        filename = f'barcode_{safe_date}.pdf'
+        filename = f'persistence_diagram_{safe_date}.pdf'
         save_path = os.path.join(self.output_dir, filename)
 
-        # plt.savefig(save_path, format='pdf', bbox_inches='tight')
+        plt.savefig(save_path, format='pdf', bbox_inches='tight')
         plt.close()
 
-        print(f"[{date_str}] Barcode saved to: {save_path}")
+        print(f"[{date_str}] Persistence diagram saved to: {save_path}")
         return diagrams

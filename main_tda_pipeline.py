@@ -1,57 +1,71 @@
-from Tool.helper import select_topological_anchors, get_sp500_symbols, batch_normality_test
-from Tool.tda_utils import TDAFinancialEngine
-import pandas as pd
+"""Command-line entry point for the financial TDA research pipeline."""
+import argparse
+from pathlib import Path
+
+import matplotlib
 import numpy as np
 
-if __name__ == "__main__":
-    # --- Step 1: Define an expansive pool with exogenous assets ---
-    print("Step 1: Initializing Broad Market Pool...")
-    base_pool = get_sp500_symbols(80)  # Take the first 80 stocks as the pool
-    # Incorporate safe-haven and non-related assets to expand the characteristic space
-    exogenous_assets = ['GLD', 'TLT', 'VIXY', 'BTC-USD']
-    full_pool = list(set(base_pool + exogenous_assets))
+from Tool.helper import batch_normality_test, get_sp500_symbols, select_topological_anchors
+from Tool.tda_utils import TDAFinancialEngine
 
-    START_DATE = '2019-01-01'
-    END_DATE = '2021-12-31'
+MACRO_EVENTS = {
+    '2020-02-20': 'COVID-19 Selloff',
+    '2020-03-16': 'March 2020 Selloff',
+    '2020-11-09': 'Vaccine Announcement',
+    '2021-01-27': 'GameStop Short Squeeze',
+    '2021-05-19': 'Crypto Selloff',
+}
 
-    engine = TDAFinancialEngine(window_size=60)
 
-    print("Fetching raw data...")
-    raw_returns = engine.prepare_returns(full_pool, START_DATE, END_DATE)
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--start', default='2019-01-01')
+    parser.add_argument('--end', default='2021-12-31')
+    parser.add_argument('--target-date', default='2020-03-16')
+    parser.add_argument('--pool-size', type=int, default=80)
+    parser.add_argument('--anchors', type=int, default=20)
+    parser.add_argument('--window', type=int, default=60)
+    parser.add_argument('--epsilon', type=float, default=0.8)
+    parser.add_argument('--symbols', nargs='+', help='Override the default asset pool')
+    parser.add_argument('--output-dir', default='tda_outputs')
+    parser.add_argument('--no-show', action='store_true', help='Save plots without opening windows')
+    args = parser.parse_args()
+    if args.window < 3 or args.anchors < 2 or args.pool_size < 1:
+        parser.error('window >= 3, anchors >= 2 and pool-size >= 1 are required')
+    if args.no_show:
+        matplotlib.use('Agg')
 
-    # --- Step 2: Manifold Learning / Topological Anchor Selection ---
-    print("\nStep 2: Selecting 20 Topological Anchors via Hierarchical Clustering...")
-    optimal_symbols = select_topological_anchors(raw_returns, num_anchors=20)
+    symbols = args.symbols or get_sp500_symbols(args.pool_size) + ['GLD', 'TLT', 'VIXY', 'BTC-USD']
+    symbols = list(dict.fromkeys(symbols))
+    engine = TDAFinancialEngine(window_size=args.window, output_dir=args.output_dir, show=not args.no_show)
+    output = Path(args.output_dir)
+    print(f'Downloading {len(symbols)} assets...')
+    raw_returns = engine.prepare_returns(symbols, args.start, args.end)
+    # Keep assets with at least 95% coverage, then use complete observations.
+    raw_returns = raw_returns.replace([np.inf, -np.inf], np.nan)
+    raw_returns = raw_returns.dropna(axis=1, thresh=int(np.ceil(len(raw_returns) * 0.95)))
+    raw_returns = raw_returns.dropna(axis=0, how='any')
+    anchors = select_topological_anchors(raw_returns, args.anchors)
+    returns = raw_returns[anchors]
+    if len(returns) < args.window:
+        raise ValueError('Not enough complete observations for the requested window')
+    print(f'Selected {len(anchors)} anchors: {", ".join(anchors)}')
+    returns.to_csv(output / 'returns.csv', index_label='Date')
+    normality = batch_normality_test(returns)
+    normality.to_csv(output / 'normality.csv')
+    print(normality)
 
-    # Our current core dataset is clean and highly representative
-    returns = raw_returns[optimal_symbols].dropna()
+    window, actual_date = engine.get_window(returns, args.target_date)
+    engine.plot_empirical_distribution(returns)
+    engine.plot_asset_cloud_3D(returns, actual_date)
+    engine.plot_market_topology_separated(returns, actual_date, epsilon=args.epsilon)
+    distance = engine.correlation_distance(window)
+    engine.generate_persistence_barcode(distance, actual_date)
+    topology = engine.compute_topology_timeseries(returns)
+    topology.to_csv(output / 'topology_timeseries.csv', index_label='Date')
+    engine.plot_homology_timeseries(topology, events=MACRO_EVENTS)
+    print(f'Analysis complete. Results: {output.resolve()}')
 
-    # --- Step 3: Statistical Rigor (Normality Testing) ---
-    print("\nStep 3: Executing Normality Tests on selected Anchors...")
-    normality_table = batch_normality_test(returns)
-    print(normality_table)
-    engine.plot_empirical_distribution(returns, asset_name=None)
 
-    # --- Step 4: Topological Data Analysis Visualization ---
-    print("\nStep 4: Executing TDA Visualizations for crash date...")
-    crash_date = '2020-03-16'  # COVID circuit breaker day, '2021-05-18'
-
-    engine.plot_asset_cloud_3D(returns, crash_date)
-    engine.plot_market_topology_separated(returns, crash_date, epsilon=0.80)
-
-    # --- Step 5: Timeseries Computation ---
-    print("\nStep 5: Computing the full L1 Norm time series with Macro Events...")
-    topo_ts = engine.compute_topology_timeseries(returns)
-
-    # Define the macro/financial major events marked on the timeline
-    macro_shocks = {
-        '2020-02-20': 'COVID-19 Initial Selloff',  # The first wave of selling during the epidemic has begun
-        '2020-03-16': 'Black Monday (VIX Record High)',  # On Black Monday, the US stock market experienced a circuit breaker
-        '2020-11-09': 'Pfizer Vaccine Efficacy Announced',  # Pfizer's vaccine is good news, and the market style has switched
-        '2021-01-27': 'GameStop Short Squeeze',  # GME retail investor short squeeze incident (Local liquidity shock)
-        '2021-05-19': 'Crypto Crash (China Ban/Tesla)'  # 5.19 The cryptocurrency market plunged and technology stocks pulled back
-    }
-
-    engine.plot_homology_timeseries(topo_ts, events=macro_shocks)
-
-    print("\nPipeline execution complete! All structural analyses are finished.")
+if __name__ == '__main__':
+    main()

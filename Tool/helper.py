@@ -1,7 +1,7 @@
 import pandas as pd
 import numpy as np
 import scipy.stats as stats
-from scipy.cluster.hierarchy import linkage, fcluster, dendrogram
+from scipy.cluster.hierarchy import linkage, fcluster
 from scipy.spatial.distance import squareform
 import requests
 import io
@@ -9,7 +9,8 @@ import io
 def get_sp500_symbols(limit=50):
     url = 'https://en.wikipedia.org/wiki/List_of_S%26P_500_companies'
     headers = {"User-Agent": "Mozilla/5.0"}
-    response = requests.get(url, headers=headers)
+    response = requests.get(url, headers=headers, timeout=30)
+    response.raise_for_status()
     if response.status_code == 200:
         table = pd.read_html(io.StringIO(response.text))
         df = table[0]
@@ -37,13 +38,20 @@ def batch_normality_test(returns_df):
             'S-W p-value': f"{p_sw:.2e}",
             'Is Normal?': is_normal
         })
-    df = pd.DataFrame(results).set_index('Asset')
+    df = pd.DataFrame(results, columns=['Asset', 'Skewness', 'Kurtosis', 'J-B p-value', 'S-W p-value', 'Is Normal?']).set_index('Asset')
     return df
 
 
 def select_topological_anchors(returns_df, num_anchors=20):
-    """Use hierarchical clustering to select the anchor assets with the greatest topological diversity"""
-    clean_returns = returns_df.dropna(axis=1, thresh=int(len(returns_df) * 0.9)).fillna(0)
+    """Select one medoid per Ward cluster (at most num_anchors assets)."""
+    if num_anchors < 1:
+        raise ValueError('num_anchors must be positive')
+    clean_returns = returns_df.dropna(axis=0, how='any')
+    clean_returns = clean_returns.loc[:, clean_returns.std() > 0]
+    if len(clean_returns) < 3 or clean_returns.shape[1] < 2:
+        raise ValueError('Anchor selection requires at least 3 complete rows and 2 nonconstant assets')
+    if num_anchors >= clean_returns.shape[1]:
+        return clean_returns.columns.tolist()
     corr_matrix = clean_returns.corr()
     dist_matrix = np.sqrt(2 * (1 - np.clip(corr_matrix, -1.0, 1.0)))
 
@@ -53,7 +61,7 @@ def select_topological_anchors(returns_df, num_anchors=20):
 
     selected_assets = []
     asset_names = clean_returns.columns
-    for i in range(1, num_anchors + 1):
+    for i in np.unique(cluster_labels):
         cluster_assets = asset_names[cluster_labels == i]
         if len(cluster_assets) == 1:
             selected_assets.append(cluster_assets[0])
